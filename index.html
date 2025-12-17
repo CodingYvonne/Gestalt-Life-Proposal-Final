@@ -177,7 +177,7 @@
                     </button>
 
                     <!-- 錯誤/提示訊息 -->
-                    <div id="status-message" class="mt-4 text-center text-sm text-red-500 hidden"></div>
+                    <div id="status-message" class="mt-4 text-center text-gray-600 hidden"></div> <!-- 調整為中性顏色，用於提示 -->
 
                     <button onclick="switchView('home', 'ai')" class="mt-4 w-full text-sm text-gray-500 hover:text-primary-dark transition duration-150 py-2 rounded-lg border border-gray-300 hover:border-primary-dark">← 返回起始頁</button>
                 </div>
@@ -193,6 +193,7 @@
         // === 全域變數宣告 (用於儲存 DOM 元素) ===
         let chatHistory = [];
         let currentSelectedEmoji = null; 
+        let chatRound = 0; // 新增對話回合計數器
         
         let displayCardRandom;
         let messageContentRandom;
@@ -282,6 +283,7 @@
             if (targetViewName === 'home') {
                 // 清理 AI 對話狀態
                 chatHistory = [];
+                chatRound = 0; // 重置回合數
                 endConversationButton.classList.add('hidden');
                 chatInputArea.classList.remove('hidden');
                 paletteResultArea.classList.add('hidden');
@@ -294,10 +296,14 @@
             }
         }
         
-        // === Gemini API 相關設定 (保持不變) ===
+        // === Gemini API 相關設定 (已還原為 GitHub 直連模式) ===
         const LLM_MODEL = "gemini-2.5-flash-preview-09-2025";
         const IMAGEN_MODEL = "imagen-4.0-generate-001";
-        const apiKey = "AIzaSyDUKbtKFt2uaSKQkT5FQJd-G9gQochOJTk"; 
+        
+        // 🚨 請將您最新申請的 API Key 貼到下方的雙引號內！
+        const apiKey = "AIzaSyANjPq9Tv3rE-14sxxdJoxnH3ctvsEH-Vo"; 
+        
+        // API URL 恢復為直接呼叫 Google 服務，並帶上金鑰
         const LLM_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${LLM_MODEL}:generateContent?key=${apiKey}`;
         const IMAGEN_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:predict?key=${apiKey}`;
 
@@ -316,6 +322,7 @@
                         delay *= 2; 
                     } else {
                         const errorBody = await response.text();
+                        // 包含 400/403 錯誤詳細資訊的拋出
                         throw new Error(`API響應錯誤：${response.status} - ${errorBody}`);
                     }
                 } catch (error) {
@@ -330,7 +337,8 @@
             statusMessage.classList.add('hidden'); 
             
             const payload = {
-                contents: [{ parts: [{ text: `我的煩惱是：${userQuery}` }] }],
+                // LLM API 直連使用完整的 chatHistory 和 SYSTEM_PROMPT
+                contents: chatHistory, 
                 systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
             };
 
@@ -341,11 +349,16 @@
             };
 
             try {
+                // 呼叫 LLM 直連服務
                 return await fetchWithExponentialBackoff(LLM_API_URL, options);
             } catch (error) {
                 console.error("Gemini API 呼叫錯誤:", error);
                 statusMessage.textContent = `完形行者回應失敗: ${error.message}`;
                 statusMessage.classList.remove('hidden');
+                
+                statusMessage.classList.remove('text-gray-600');
+                statusMessage.classList.add('text-red-500');
+
                 return { candidates: [{ content: { parts: [{ text: "抱歉，目前無法提供完形回應。請稍後再試，或者選擇上方的隨機指令。" }] } }] };
             }
         }
@@ -475,7 +488,6 @@
             if (currentSelectedEmoji !== clickedEmoji) {
                 element.classList.add('selected');
                 element.classList.add('text-white');
-                element.classList.remove('text-gray-800');
                 currentSelectedEmoji = clickedEmoji;
             } else {
                 // 如果點擊的是當前選中的，則取消選中
@@ -522,20 +534,22 @@
 
             // 3. API Call
             const payload = { 
-                instances: { prompt: prompt }, 
+                instances: { prompt: prompt },
                 parameters: { "sampleCount": 1 } 
             };
 
             const options = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload) 
             };
 
             try {
-                const result = await fetchWithExponentialBackoff(IMAGEN_API_URL, options, 5, 2000); // 增加延遲和重試次數
+                // 呼叫 IMAGEN 直連服務
+                const result = await fetchWithExponentialBackoff(IMAGEN_API_URL, options, 5, 2000); 
 
                 const base64Data = result?.predictions?.[0]?.bytesBase64Encoded;
+                const errorMessage = result?.error?.message;
 
                 if (base64Data) {
                     const imageUrl = `data:image/png;base64,${base64Data}`;
@@ -548,13 +562,16 @@
                             <p class="text-xs text-gray-400 mt-2 text-center">這是 AI 根據你的內在覺察，捕捉到的此刻風景。</p>
                         </div>
                     `;
+                } else if (errorMessage) {
+                    // 如果服務回傳錯誤訊息，則拋出
+                    throw new Error(errorMessage);
                 } else {
-                    throw new Error("AI未能生成圖片。");
+                    throw new Error("AI未能生成圖片。請檢查 API Key 是否有效。");
                 }
 
             } catch (error) {
                 console.error("圖片生成失敗:", error);
-                imageResultArea.innerHTML = `<p class="mt-4 text-center text-red-500">圖片生成失敗。可能原因：API Key 無效或網路錯誤。</p>`;
+                imageResultArea.innerHTML = `<p class="mt-4 text-center text-red-500">圖片生成失敗。可能原因：${error.message}</p>`;
             } finally {
                 // 5. UI 狀態恢復
                 imageButton.disabled = false;
@@ -577,7 +594,7 @@
         // === 對話歷史渲染 (New) ===
         function renderChatHistory() {
             const container = chatHistoryContainer;
-            if (!container) return; // FIX: 確保 container 已定義，避免在初始化前被呼叫時出錯
+            if (!container) return; // 確保 container 已定義
             
             container.innerHTML = '';
 
@@ -619,7 +636,7 @@
             submitConcernButton.disabled = true;
             concernSpinner.classList.remove('hidden');
             concernButtonText.textContent = '思考中...';
-            statusMessage.classList.add('hidden');
+            statusMessage.classList.add('hidden'); // 清除先前的提示/錯誤
             
             // 2. 將用戶輸入加入歷史並渲染
             chatHistory.push({ role: 'user', parts: [{ text: concern }] });
@@ -639,23 +656,40 @@
             };
 
             try {
+                // 呼叫 LLM 直連服務
                 const result = await fetchWithExponentialBackoff(LLM_API_URL, options);
-                const responseText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                const responseText = result?.candidates?.[0]?.content?.parts?.[0]?.text || result?.error?.message; // 處理錯誤訊息
 
-                if (responseText) {
+                if (responseText && !result?.error) {
                     // 4. 將 AI 回應加入歷史並渲染
                     chatHistory.push({ role: 'model', parts: [{ text: responseText }] });
                     renderChatHistory();
                     endConversationButton.classList.remove('hidden'); // 顯示結束對話按鈕
+                    
+                    // 5. 顯示結束對話的提示 (僅在第一次回應時顯示)
+                    if (chatRound === 0) {
+                        statusMessage.classList.remove('hidden');
+                        statusMessage.classList.remove('text-red-500'); 
+                        statusMessage.classList.add('text-gray-600', 'font-semibold'); 
+                        statusMessage.textContent = '💡 提示：若您感覺覺察已足夠，可以點選下方的「結束本次對話」按鈕，獲得專屬色票。';
+                        chatRound++; // 增加回合數
+                    }
                 } else {
-                    throw new Error("模型未能產生有效回應。");
+                    // 處理錯誤
+                    throw new Error(result?.error?.message || "模型未能產生有效回應。");
                 }
             } catch (error) {
                 console.error("Gemini API 呼叫錯誤:", error);
                 statusMessage.textContent = `完形行者回應失敗: ${error.message}`;
                 statusMessage.classList.remove('hidden');
+                statusMessage.classList.remove('text-gray-600');
+                statusMessage.classList.add('text-red-500');
+                
+                // 如果發生錯誤，將用戶的最後一條訊息從歷史中移除，以便用戶可以重試或修改
+                chatHistory.pop();
+                renderChatHistory();
             } finally {
-                // 5. UI 狀態恢復 - 按鈕在輸入框清空後，會自動被禁用 (長度=0 < 1)
+                // 6. UI 狀態恢復 - 按鈕在輸入框清空後，會自動被禁用 (長度=0 < 1)
                 submitConcernButton.disabled = userConcernInput.value.trim().length < 1; 
                 concernSpinner.classList.add('hidden');
                 concernButtonText.textContent = '接收完形回應';
@@ -692,10 +726,12 @@
             const options = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(palettePayload)
+                // 注意：這裡呼叫 LLM 直連服務
+                body: JSON.stringify(payload)
             };
 
             try {
+                // 呼叫 LLM 直連服務
                 const result = await fetchWithExponentialBackoff(LLM_API_URL, options);
                 const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (jsonText) {
@@ -716,6 +752,7 @@
             chatInputArea.classList.add('hidden');
             endConversationButton.disabled = true;
             endConversationButton.textContent = '生成禮物中...';
+            statusMessage.classList.add('hidden'); // 清除所有提示
 
             // 2. 顯示載入狀態
             paletteResultArea.classList.remove('hidden');
